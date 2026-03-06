@@ -1,6 +1,23 @@
 const Textbook = require('../models/Textbook');
 const mongoose = require('mongoose');
 
+const normalizeClass = (raw = '') => {
+  const lower = raw.toString().toLowerCase().trim();
+  const wordsToNumbers = {
+    'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5',
+    'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10',
+    'first': '1', 'second': '2', 'third': '3', 'fourth': '4', 'fifth': '5',
+    'sixth': '6', 'seventh': '7', 'eighth': '8', 'ninth': '9', 'tenth': '10'
+  };
+  
+  for (const [word, num] of Object.entries(wordsToNumbers)) {
+    if (lower.includes(word)) return num;
+  }
+
+  const match = lower.match(/\d+/);
+  return match ? match[0] : lower;
+};
+
 // @route  GET /api/content/classes
 // @desc   Get all available classes
 const getClasses = async (req, res) => {
@@ -16,10 +33,11 @@ const getClasses = async (req, res) => {
 // @desc   Get subjects for a class
 const getSubjects = async (req, res) => {
   try {
-    console.log('Querying subjects for class:', req.params.class);
-    const subjects = await Textbook.distinct('subject', { class: req.params.class });
+    const classVal = normalizeClass(req.params.class);
+    console.log('Querying subjects for class:', classVal, '(raw:', req.params.class, ')');
+    const subjects = await Textbook.distinct('subject', { class: classVal });
     console.log('Found subjects:', subjects);
-    res.json({ class: req.params.class, subjects });
+    res.json({ class: classVal, subjects });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -29,9 +47,10 @@ const getSubjects = async (req, res) => {
 // @desc   Get chapters list for class + subject
 const getChapters = async (req, res) => {
   try {
+    const classVal = normalizeClass(req.params.class);
     const chapters = await Textbook.find(
-      { class: req.params.class, subject: req.params.subject.toLowerCase() },
-      { chapterNumber: 1, title: 1, _id: 0 }
+      { class: classVal, subject: req.params.subject.toLowerCase() },
+      { chapterNumber: 1, title: 1, _id: 1 }
     ).sort({ chapterNumber: 1 });
     res.json({ class: req.params.class, subject: req.params.subject, chapters });
   } catch (error) {
@@ -43,8 +62,9 @@ const getChapters = async (req, res) => {
 // @desc   Get full chapter content
 const getChapter = async (req, res) => {
   try {
+    const classVal = normalizeClass(req.params.class);
     const chapter = await Textbook.findOne({
-      class: req.params.class,
+      class: classVal,
       subject: req.params.subject.toLowerCase(),
       chapterNumber: parseInt(req.params.chapter),
     });

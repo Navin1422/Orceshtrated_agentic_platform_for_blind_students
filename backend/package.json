@@ -9,13 +9,20 @@
     "seed": "node data/seed.js"
   },
   "dependencies": {
+    "@langchain/core": "^1.1.31",
+    "@langchain/langgraph": "^1.2.0",
+    "@langchain/openai": "^1.2.12",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@openrouter/sdk": "^0.9.11",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.18.2",
     "mongoose": "^8.2.0",
+    "multer": "^2.1.0",
+    "node-cron": "^4.2.1",
     "openai": "^6.25.0",
     "pdf-parse": "^2.4.5",
+    "twilio": "^5.12.2",
     "uuid": "^9.0.1"
   },
   "devDependencies": {

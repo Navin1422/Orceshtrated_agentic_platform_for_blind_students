@@ -110,4 +110,35 @@ const saveNotes = async (req, res) => {
   }
 };
 
-module.exports = { createStudent, getStudent, updateStudent, getProgress, saveNotes };
+const addFeedback = async (req, res) => {
+  try {
+    const { message, teacherId } = req.body;
+    if (!message) return res.status(400).json({ error: 'Message is required' });
+
+    const student = await Student.findOneAndUpdate(
+      { studentId: req.params.id },
+      { $push: { feedback: { message, teacherId: teacherId || 'T001', date: new Date() } } },
+      { new: true }
+    );
+    if (!student) return res.status(404).json({ error: 'Student not found' });
+    res.json({ message: 'Feedback sent!', feedback: student.feedback });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+const markFeedbackAsRead = async (req, res) => {
+  try {
+    const student = await Student.findOne({ studentId: req.params.id });
+    if (!student) return res.status(404).json({ error: 'Student not found' });
+    
+    student.feedback.forEach(f => { f.read = true; });
+    await student.save();
+    
+    res.json({ message: 'Feedback marked as read', feedback: student.feedback });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+module.exports = { createStudent, getStudent, updateStudent, getProgress, saveNotes, addFeedback, markFeedbackAsRead };

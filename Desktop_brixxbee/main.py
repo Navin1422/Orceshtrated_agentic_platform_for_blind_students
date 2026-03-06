@@ -14,25 +14,29 @@ try:
     from dotenv import load_dotenv
     # Explicitly load from the directory of this script
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    load_dotenv(os.path.join(script_dir, ".env"))
+    env_path = os.path.join(script_dir, ".env")
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+    else:
+        print(f"WARNING: .env file not found at {env_path}")
 except ImportError:
-    pass
+    print("WARNING: python-dotenv not installed. Environment variables must be set manually.")
 
 # --- CONFIGURATION ---
 # Load from .env with fallbacks
-# VISION_API_KEY = os.getenv("VISION_API_KEY") or "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"
-# VISION_MODEL = os.getenv("VISION_MODEL") or "google/gemini-2.0-flash-001" 
+VISION_API_KEY = os.getenv("VISION_API_KEY")
+VISION_MODEL = os.getenv("VISION_MODEL") or "google/gemini-2.0-flash-001" 
 
-# BRAIN_API_KEY = os.getenv("BRAIN_API_KEY") or "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"
-# BRAIN_MODEL = os.getenv("BRAIN_MODEL") or "deepseek/deepseek-v3.1-terminus"
+BRAIN_API_KEY = os.getenv("BRAIN_API_KEY")
+BRAIN_MODEL = os.getenv("BRAIN_MODEL") or "google/gemini-2.0-flash-001"
 
-# --- NEW EXPERIMENTAL CONFIG (GPT-4o Audio) ---
-BRAIN_API_KEY = "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"
-BRAIN_MODEL = "openai/gpt-4o-audio-preview"
-
-# Keep vision on the working key for now
-VISION_API_KEY = "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"
-VISION_MODEL = "google/gemini-2.0-flash-001"
+# Validate keys
+if not VISION_API_KEY or not BRAIN_API_KEY:
+    print("ERROR: API keys not found! Please check your .env file.")
+    print(f"VISION_API_KEY: {'[SET]' if VISION_API_KEY else '[MISSING]'}")
+    print(f"BRAIN_API_KEY: {'[SET]' if BRAIN_API_KEY else '[MISSING]'}")
+    # We'll allow it to continue to the traceback for now, or we could exit.
+    # But let's keep it informative.
 
 # Setup OpenRouter clients with headers
 headers = {
@@ -40,20 +44,47 @@ headers = {
     "X-Title": "Brixbee AI Guardian",
 }
 
-v_client = OpenAI(
-    base_url="https://openrouter.ai/api/v1", 
-    api_key=VISION_API_KEY,
-    default_headers=headers
-)
-b_client = OpenAI(
-    base_url="https://openrouter.ai/api/v1", 
-    api_key=BRAIN_API_KEY,
-    default_headers=headers
-)
+# Clients
+try:
+    v_client = OpenAI(
+        base_url="https://openrouter.ai/api/v1", 
+        api_key=VISION_API_KEY or "missing_key",
+        default_headers=headers
+    )
+    b_client = OpenAI(
+        base_url="https://openrouter.ai/api/v1", 
+        api_key=BRAIN_API_KEY or "missing_key",
+        default_headers=headers
+    )
+except Exception as e:
+    print(f"Init Error: {e}")
+
 
 # Project Config
-WEBSITE_URL = "http://localhost:5174"
-WAKE_WORDS = ["hey brixbee", "hey bricks b", "hey bixby", "hey brix", "brixbee", "brix"]
+WEBSITE_URL           = "http://localhost:3000/"
+AUTO_LOGIN_URL        = "http://localhost:3000/auto-login?name=BrixbeeStudent&role=student"
+BACKEND_BASE_URL      = "http://localhost:5001"
+PDF_CHAT_API_URL      = f"{BACKEND_BASE_URL}/api/ai/pdf-chat"  # Legacy fallback
+BRIXBEE_AGENT_URL     = f"{BACKEND_BASE_URL}/api/ai/brixbee-chat"  # LangGraph Agent
+WAKE_WORDS = ["hey brixbee", "hey bricks b", "hey bixby", "hey brix", "brixbee", "brix", "bixby"]
+
+# Subject keywords that trigger PDF Q&A
+SUBJECT_KEYWORDS = [
+    "math", "maths", "mathematics", "algebra", "geometry", "arithmetic",
+    "science", "physics", "chemistry", "biology",
+    "english", "grammar", "vocabulary", "poem", "prose",
+    "social", "history", "geography", "civics",
+    "explain", "what is", "define", "chapter", "lesson", "textbook",
+    "teach me", "tell me about", "how does", "why is", "who is", "where is",
+    "solve", "calculate", "equation"
+]
+
+# Website open keywords → use auto-login URL
+WEBSITE_OPEN_KEYWORDS = [
+    "ai website", "learning platform", "ai platform", "eduvoice",
+    "brixbee website", "learning website", "my website", "student dashboard",
+    "open website", "study platform"
+]
 
 # --- APP SETUP ---
 ctk.set_appearance_mode("Dark")
@@ -134,10 +165,12 @@ class BrixbeeApp(ctk.CTk):
         self.pulse_val = 0
         self.pulse_dir = 1
         self.animate_pulse()
-        self.memory = [] 
+        self.memory = []          # Legacy memory (for native AI fallback only)
+        self.agent_history = []   # LangGraph agent conversation history
+        self.student_name = "BrixbeeStudent"  # Will be resolved by LangGraph agent
         self.conversation_active = False
         self.last_interaction_time = 0
-        self.tamil_mode = False 
+        self.tamil_mode = False
         self.current_state = "IDLE"
 
         # Control Panel
@@ -391,7 +424,7 @@ class BrixbeeApp(ctk.CTk):
                     self.last_guard_check = current_time
                     img = self.capture_image()
                     if img:
-                        prompt = "You are a Guardian AI for a blind child. Scan the image for: 1. Physical hazards 2. The child's current emotion/mood. If everything is safe and mood is normal, respond 'SAFE'. Otherwise, describe the hazard or suggest an emotional check-in briefly."
+                        prompt = "You are a Guardian AI. Image scan: 1. Hazards? 2. Emotion? Respond ONLY 'SAFE' if okay. Otherwise, 1 short sentence hazard/mood warning."
                         raw_vision = self.analyze_image(img, prompt)
                         
                         if raw_vision and "SAFE" not in raw_vision.upper():
@@ -466,6 +499,77 @@ class BrixbeeApp(ctk.CTk):
                 return "My vision system is unauthorized. Please check the API key."
             return "I am having trouble processing the image."
 
+    def ask_pdf_ai(self, question):
+        """Legacy PDF/Subject Teacher - kept as fallback only."""
+        self.set_status("THINKING", "#F1C40F", play_sound=(self.current_state != "THINKING"))
+        try:
+            resp = requests.post(
+                PDF_CHAT_API_URL,
+                json={"question": question, "subject": question, "studentName": self.student_name},
+                timeout=20
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                answer = data.get("answer", "")
+                return answer if answer else None
+            return None
+        except Exception as e:
+            print(f"DEBUG: PDF Chat API unreachable: {e}")
+            return None
+
+    def ask_langgraph_agent(self, message, interaction_type="assistant", vision_context=None):
+        """
+        PRIMARY AI method: Routes ALL messages through the LangGraph Brixbee Agent.
+        The agent automatically:
+          - Fetches the student's profile from the website database
+          - Searches textbooks for subject questions
+          - Syncs learning progress back to the website
+          - Logs the interaction for teacher review
+        Falls back to native AI if the backend is unreachable.
+        """
+        self.set_status("THINKING", "#F1C40F", play_sound=(self.current_state != "THINKING"))
+
+        # Append vision context to message if available
+        full_message = message
+        if vision_context:
+            full_message = f"{message} [Vision context: {vision_context}]"
+
+        # Add to agent history
+        self.agent_history.append({"role": "user", "content": full_message})
+        if len(self.agent_history) > 8:
+            self.agent_history = self.agent_history[-8:]
+
+        try:
+            print(f"DEBUG: Calling LangGraph Brixbee Agent... type={interaction_type}")
+            resp = requests.post(
+                BRIXBEE_AGENT_URL,
+                json={
+                    "message": full_message,
+                    "studentName": self.student_name,
+                    "interactionType": interaction_type,
+                    "history": self.agent_history[:-1]  # Exclude the message we just added
+                },
+                timeout=30
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                answer = data.get("answer", "")
+                tools_used = data.get("toolsUsed", [])
+                if tools_used:
+                    print(f"DEBUG: LangGraph tools used: {tools_used}")
+
+                if answer:
+                    # Add to agent history
+                    self.agent_history.append({"role": "assistant", "content": answer})
+                    return answer
+
+            print(f"DEBUG: LangGraph Agent returned status {resp.status_code}")
+            return None  # Fall back to native AI
+
+        except Exception as e:
+            print(f"DEBUG: LangGraph Agent unreachable: {e}. Falling back to native AI.")
+            return None  # Fall back to native AI
+
     def ask_ai(self, question, model_type="teacher", vision_data=None):
         """Brain Agent: The lead orchestrator (Supports GPT-4o Audio with fallback)."""
         self.set_status("THINKING", "#F1C40F", play_sound=(self.current_state != "THINKING"))
@@ -527,23 +631,41 @@ class BrixbeeApp(ctk.CTk):
                     **extra_params
                 )
                 
+                sentence_buffer = ""
                 for chunk in completion:
-                    if hasattr(chunk.choices[0], 'delta'):
+                    if chunk.choices and hasattr(chunk.choices[0], 'delta'):
                         content = chunk.choices[0].delta.content
                         if content:
                             response_text += content
+                            sentence_buffer += content
+                            
+                            # Stream sentence by sentence for speed
+                            if any(p in sentence_buffer for p in [". ", "! ", "? ", "\n"]):
+                                parts = sentence_buffer.split(". ") if ". " in sentence_buffer else \
+                                        sentence_buffer.split("! ") if "! " in sentence_buffer else \
+                                        sentence_buffer.split("? ") if "? " in sentence_buffer else \
+                                        sentence_buffer.split("\n")
+                                
+                                to_speak = parts[0].strip()
+                                if to_speak:
+                                    self.speak(to_speak)
+                                sentence_buffer = "".join(parts[1:])
+
+                # Speak remaining
+                if sentence_buffer.strip():
+                    self.speak(sentence_buffer.strip())
                 
             except Exception as inner_e:
                 print(f"DEBUG: Primary model failed ({inner_e}). Falling back to gpt-4o standard...")
-                # Automatic fallback to standard stable model using the same key
                 completion = b_client.chat.completions.create(
-                    model="openai/gpt-4o",
+                    model="google/gemini-2.0-flash-001",
                     messages=messages,
                     max_tokens=300,
                     timeout=15.0,
-                    stream=False # Standard models don't need stream for text
+                    stream=False
                 )
                 response_text = completion.choices[0].message.content
+                self.speak(response_text)
 
             print(f"DEBUG: Brain response processed.")
             
@@ -569,6 +691,8 @@ class BrixbeeApp(ctk.CTk):
             print(f"Brain Agent Error: {err_msg}")
             if "401" in err_msg:
                 return "I am sorry, my brain is not authorized right now. Please check the API key."
+            if "429" in err_msg:
+                return "I'm a bit overwhelmed right now. My API limit has been reached. Please try again in a few minutes."
             return "I missed that, could you say it again?"
 
     def get_audio(self, timeout=7):
@@ -622,6 +746,7 @@ class BrixbeeApp(ctk.CTk):
             is_wake = any(w in query for w in WAKE_WORDS)
             
             if is_wake or self.conversation_active:
+                print(f"DEBUG: Wake word detected or conversation active (query: {query})")
                 self.last_interaction_time = time.time()
                 
                 # Activate live mode
@@ -728,18 +853,24 @@ class BrixbeeApp(ctk.CTk):
                     continue
 
                 if "open" in user_msg:
-                    # 1. Check for specific learning website
-                    if any(x in user_msg for x in ["brixbee", "learning", "specially", "notes", "project", "website"]):
-                        self.speak("Sure thing! Opening your learning website.")
-                        webbrowser.open(WEBSITE_URL)
+                    # 1. Check for AI/learning platform keywords → auto-login
+                    if any(x in user_msg for x in WEBSITE_OPEN_KEYWORDS):
+                        self.speak("Opening your student dashboard and logging you in automatically.")
+                        webbrowser.open(AUTO_LOGIN_URL)
+                        continue
+
+                    # 2. Check for brixbee website (generic)
+                    if any(x in user_msg for x in ["brixbee", "specially", "notes", "project", "website"]):
+                        self.speak("Opening EduVoice for you. You will be logged in automatically.")
+                        webbrowser.open(AUTO_LOGIN_URL)
                         continue
                     
-                    # 2. Check for common sites
+                    # 3. Check for common sites
                     sites = {
                         "youtube": "https://www.youtube.com",
-                        "amazon": "https://www.amazon.in",
+                        "amazon":  "https://www.amazon.in",
                         "flipkart": "https://www.flipkart.com",
-                        "google": "https://www.google.com",
+                        "google":  "https://www.google.com",
                         "facebook": "https://www.facebook.com"
                     }
                     
@@ -757,14 +888,20 @@ class BrixbeeApp(ctk.CTk):
                     self.speak("Yes? I'm listening.")
                     continue
 
-                # AI Brain
-                teaching_words = ["explain", "why", "what is", "teach", "how", "tell me about"]
-                if any(k in user_msg for k in teaching_words):
-                    ans = self.ask_ai(user_msg, model_type="teacher")
+                # --- LangGraph Brixbee Agent (PRIMARY routing for all questions) ---
+                # Determine interaction type for logging
+                is_subject_q = any(k in user_msg for k in SUBJECT_KEYWORDS)
+                interaction_type = "teacher" if is_subject_q else "assistant"
+
+                print(f"DEBUG: Routing to LangGraph Brixbee Agent (type={interaction_type})...")
+                agent_answer = self.ask_langgraph_agent(user_msg, interaction_type=interaction_type)
+
+                if agent_answer:
+                    self.speak(agent_answer)
                 else:
-                    ans = self.ask_ai(user_msg, model_type="assistant")
-                
-                self.speak(ans)
+                    # Fallback: native AI if LangGraph backend is down
+                    print(f"DEBUG: Falling back to native AI (LangGraph unavailable).")
+                    self.ask_ai(user_msg, model_type=interaction_type)
                 
             time.sleep(0.1)
 

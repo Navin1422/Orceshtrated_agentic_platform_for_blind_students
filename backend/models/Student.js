@@ -26,8 +26,15 @@ const studentSchema = new mongoose.Schema({
   notes: [noteSchema],
   lastSubject: { type: String, default: '' },
   lastChapter: { type: String, default: '' },
+  feedback: [{
+    message: String,
+    teacherId: String,
+    read: { type: Boolean, default: false },
+    date: { type: Date, default: Date.now }
+  }],
   createdAt: { type: Date, default: Date.now },
   lastActiveAt: { type: Date, default: Date.now },
+  phoneNumber: { type: String, default: '' },
 });
 
 module.exports = mongoose.model('Student', studentSchema);
